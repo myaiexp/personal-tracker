@@ -5,6 +5,9 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // Initialize Supabase client
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Auth State
+let currentUser = null;
+
 // State
 let tasks = [];
 let streaks = { current: 0, longest: 0 };
@@ -44,9 +47,95 @@ function checkConfig() {
 }
 
 async function initializeApp() {
+  const isAuthenticated = await checkAuth();
+  if (!isAuthenticated) return;
+
   updateCurrentDate();
   await loadTasks();
   await loadStreaksAndHistory();
+}
+
+// Authentication
+async function checkAuth() {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+
+  if (!session) {
+    showLoginForm();
+    return false;
+  }
+
+  currentUser = session.user;
+  showApp();
+  return true;
+}
+
+function showLoginForm() {
+  document.querySelector('.container').innerHTML = `
+    <div class="max-w-md mx-auto mt-20 bg-white p-8 rounded-lg shadow-md">
+      <h1 class="text-3xl font-bold text-gray-800 mb-6">Daily Task Tracker</h1>
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Email</label>
+          <input type="email" id="login-email" required
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Password</label>
+          <input type="password" id="login-password" required
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <button type="submit"
+          class="w-full px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold">
+          Sign In
+        </button>
+        <p id="login-error" class="text-red-600 text-sm hidden"></p>
+      </form>
+    </div>
+  `;
+
+  document.getElementById('login-form').addEventListener('submit', handleLogin);
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+  } else {
+    currentUser = data.user;
+    location.reload(); // Reload to show main app
+  }
+}
+
+function showApp() {
+  // App is already rendered in HTML, just add logout button
+  const header = document.querySelector('header .flex.gap-6');
+  if (header) {
+    const logoutBtn = document.createElement('div');
+    logoutBtn.className = 'text-center';
+    logoutBtn.innerHTML = `
+      <button id="logout-btn"
+        class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-semibold">
+        Logout
+      </button>
+    `;
+    header.appendChild(logoutBtn);
+    document.getElementById('logout-btn').addEventListener('click', handleLogout);
+  }
+}
+
+async function handleLogout() {
+  await supabaseClient.auth.signOut();
+  location.reload();
 }
 
 function setupEventListeners() {
@@ -91,6 +180,7 @@ async function fetchTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
     .select('*')
+    .eq('user_id', currentUser.id)
     .eq('is_archived', false)
     .order('created_at', { ascending: true });
 
@@ -101,7 +191,7 @@ async function fetchTasks() {
 async function createTask(title, type) {
   const { data, error } = await supabaseClient
     .from('tasks')
-    .insert([{ title, type, is_archived: false }])
+    .insert([{ title, type, is_archived: false, user_id: currentUser.id }])
     .select()
     .single();
 
