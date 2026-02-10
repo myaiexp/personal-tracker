@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: '/tracker/',
   root: 'src',
+  envDir: '../',
   build: {
     outDir: '../dist',
     emptyOutDir: true,
