@@ -27,6 +27,18 @@
           </div>
           <div class="text-center">
             <button
+              id="history-btn"
+              class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold text-sm flex items-center gap-2"
+              title="View detailed history"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span class="hidden sm:inline">History</span>
+            </button>
+          </div>
+          <div class="text-center">
+            <button
               id="export-btn"
               class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-semibold text-sm flex items-center gap-2"
               title="Export current progress to clipboard (AI-friendly format)"
@@ -40,6 +52,9 @@
         </div>
       </div>
     </header>
+
+    <!-- Dashboard View -->
+    <div id="dashboard-view">
 
     <!-- Task Input Section -->
     <section class="bg-white rounded-lg shadow-md p-6 mb-8">
@@ -161,16 +176,47 @@
       </div>
     </section>
 
-    <!-- Daily Log History Section -->
-    <section class="bg-white rounded-lg shadow-md p-6 mb-8">
-      <h2 class="text-2xl font-semibold text-gray-800 mb-4">Daily Log History</h2>
-      <div id="log-history-container" class="overflow-x-auto">
-        <!-- JS renders history table here -->
+    </div><!-- end #dashboard-view -->
+
+    <!-- History View -->
+    <div id="history-view" class="hidden">
+      <!-- History Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div class="flex items-center gap-4">
+          <button id="history-back-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold text-sm flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Dashboard
+          </button>
+          <h2 class="text-2xl font-semibold text-gray-800">History</h2>
+        </div>
+        <!-- Week Navigator -->
+        <div class="flex items-center gap-3">
+          <button id="history-prev-week" class="week-nav-btn p-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors" title="Previous week">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span id="history-week-label" class="text-sm font-medium text-gray-700 min-w-[200px] text-center">Loading...</span>
+          <button id="history-next-week" class="week-nav-btn p-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors" title="Next week">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <p id="log-history-empty" class="text-gray-400 text-center py-8 hidden">
-        No daily log data yet. Start logging above!
-      </p>
-    </section>
+
+      <!-- Week Summary -->
+      <div id="history-week-summary" class="history-summary bg-white rounded-lg shadow-md p-4 mb-6">
+        <!-- JS renders week summary here -->
+      </div>
+
+      <!-- Day Cards -->
+      <div id="history-days" class="space-y-4">
+        <!-- JS renders day cards here -->
+      </div>
+    </div><!-- end #history-view -->
 
   </div>
 

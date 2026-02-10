@@ -18,6 +18,12 @@ let todayLog = null;
 let todayEntries = {};
 let logHistory = [];
 
+// History view state
+let currentView = 'dashboard'; // 'dashboard' | 'history'
+let historyWeekOffset = 0;     // 0 = current week, 1 = last week, etc. Max 11.
+let historyWeekData = null;    // Cached data for currently viewed week
+let allTasksCache = null;      // Cached tasks including archived
+
 // DOM Elements
 const addTaskForm = document.getElementById('add-task-form');
 const taskTitleInput = document.getElementById('task-title');
@@ -39,8 +45,13 @@ const logFieldsEmpty = document.getElementById('log-fields-empty');
 const dailyLogNotes = document.getElementById('daily-log-notes');
 const dailyLogSaveStatus = document.getElementById('daily-log-save-status');
 const manageFieldsModal = document.getElementById('manage-fields-modal');
-const logHistoryContainer = document.getElementById('log-history-container');
-const logHistoryEmpty = document.getElementById('log-history-empty');
+
+// History view DOM elements
+const dashboardView = document.getElementById('dashboard-view');
+const historyView = document.getElementById('history-view');
+const historyWeekLabel = document.getElementById('history-week-label');
+const historyWeekSummary = document.getElementById('history-week-summary');
+const historyDaysContainer = document.getElementById('history-days');
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -65,7 +76,6 @@ async function initializeApp() {
   await loadTasks();
   await loadStreaksAndHistory();
   await loadDailyLog();
-  await loadLogHistory();
 }
 
 // Authentication
@@ -171,6 +181,12 @@ function setupEventListeners() {
       hideManageFieldsModal();
     }
   });
+
+  // History view event listeners
+  document.getElementById('history-btn').addEventListener('click', () => switchView('history'));
+  document.getElementById('history-back-btn').addEventListener('click', () => switchView('dashboard'));
+  document.getElementById('history-prev-week').addEventListener('click', () => navigateHistoryWeek(1));
+  document.getElementById('history-next-week').addEventListener('click', () => navigateHistoryWeek(-1));
 
   // Daily Log event listeners
   document.getElementById('manage-fields-btn').addEventListener('click', showManageFieldsModal);
@@ -799,7 +815,6 @@ async function refreshAll() {
   await loadTasks();
   await loadStreaksAndHistory();
   await loadDailyLog();
-  await loadLogHistory();
 }
 
 function escapeHtml(text) {
@@ -1047,7 +1062,6 @@ async function handleDeleteField(e) {
       delete todayEntries[fieldId];
       renderManageFieldsList();
       renderDailyLogSection();
-      await loadLogHistory();
     } catch (error) {
       console.error('Error deleting field:', error);
       alert('Failed to delete field. Please try again.');
@@ -1076,21 +1090,7 @@ async function handleMoveField(fieldId, direction) {
   }
 }
 
-// Log History
-async function loadLogHistory() {
-  try {
-    const today = getTodayDate();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 27);
-    const startStr = startDate.toISOString().split('T')[0];
-
-    logHistory = await fetchLogHistoryData(startStr, today);
-    renderLogHistoryTable();
-  } catch (error) {
-    console.error('Error loading log history:', error);
-  }
-}
-
+// Mood helpers
 function getMoodLabel(mood) {
   const labels = { 1: 'Very Bad', 2: 'Bad', 3: 'Okay', 4: 'Good', 5: 'Great' };
   return labels[mood] || '';
@@ -1101,63 +1101,319 @@ function getMoodEmoji(mood) {
   return emojis[mood] || '';
 }
 
-function renderLogHistoryTable() {
-  if (logHistory.length === 0 && logFields.length === 0) {
-    logHistoryContainer.innerHTML = '';
-    logHistoryEmpty.classList.remove('hidden');
-    return;
+// ========== History View ==========
+
+function switchView(view) {
+  currentView = view;
+  if (view === 'history') {
+    dashboardView.classList.add('hidden');
+    historyView.classList.remove('hidden');
+    allTasksCache = null; // Reset cache when entering history
+    loadHistoryWeek();
+  } else {
+    historyView.classList.add('hidden');
+    dashboardView.classList.remove('hidden');
   }
+}
 
-  logHistoryEmpty.classList.add('hidden');
+function getWeekRange(offset) {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset - (offset * 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: monday, end: sunday };
+}
 
-  // Build field columns from current fields
-  const fieldHeaders = logFields.map(f =>
-    `<th>${escapeHtml(f.name)}</th>`
-  ).join('');
+function dateToStr(date) {
+  return date.toISOString().split('T')[0];
+}
 
-  // Build 28-day rows (logHistory is already sorted desc)
-  const rows = logHistory.map(log => {
-    const fieldCells = logFields.map(f => {
-      const entry = log.entries.find(e => e.field_id === f.id);
-      return `<td>${entry ? escapeHtml(entry.value) : '<span class="text-gray-300">-</span>'}</td>`;
-    }).join('');
+function formatDateLong(dateStr) {
+  const date = new Date(dateStr + 'T00:00:00');
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+}
 
-    const moodCell = log.mood
-      ? `<td title="${getMoodLabel(log.mood)}">${getMoodEmoji(log.mood)}</td>`
-      : '<td><span class="text-gray-300">-</span></td>';
+async function fetchAllTasksIncludingArchived() {
+  if (allTasksCache) return allTasksCache;
 
-    const notesCell = log.notes
-      ? `<td class="max-w-xs truncate" title="${escapeHtml(log.notes)}">${escapeHtml(log.notes)}</td>`
-      : '<td><span class="text-gray-300">-</span></td>';
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .order('created_at', { ascending: true });
 
-    return `<tr>
-      <td class="font-medium">${formatDate(log.log_date)}</td>
-      ${fieldCells}
-      ${moodCell}
-      ${notesCell}
-    </tr>`;
-  }).join('');
+  if (error) throw error;
+  allTasksCache = data || [];
+  return allTasksCache;
+}
 
-  if (logHistory.length === 0) {
-    logHistoryContainer.innerHTML = '<p class="text-gray-400 text-center py-4">No log entries yet. Start filling in your daily log above!</p>';
-    return;
+async function fetchWeekCompletions(startDate, endDate) {
+  const { data, error } = await supabaseClient
+    .from('completions')
+    .select('*')
+    .gte('completed_date', startDate)
+    .lte('completed_date', endDate);
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function loadHistoryWeek() {
+  const { start, end } = getWeekRange(historyWeekOffset);
+  const startStr = dateToStr(start);
+  const endStr = dateToStr(end);
+
+  // Update week label
+  const startLabel = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const endLabel = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  historyWeekLabel.textContent = `${startLabel} — ${endLabel}`;
+
+  // Update nav button states
+  document.getElementById('history-next-week').disabled = historyWeekOffset === 0;
+  document.getElementById('history-prev-week').disabled = historyWeekOffset >= 11;
+
+  try {
+    const [allTasks, completions, logData, fields] = await Promise.all([
+      fetchAllTasksIncludingArchived(),
+      fetchWeekCompletions(startStr, endStr),
+      fetchLogHistoryData(startStr, endStr),
+      fetchLogFields()
+    ]);
+
+    logFields = fields;
+
+    // Build completions lookup: { "taskId_date": { is_completed, failure_note } }
+    const compMap = {};
+    completions.forEach(c => {
+      compMap[`${c.task_id}_${c.completed_date}`] = c;
+    });
+
+    // Build log lookup by date
+    const logMap = {};
+    logData.forEach(log => {
+      logMap[log.log_date] = log;
+    });
+
+    // Build 7 day objects
+    const days = [];
+    for (let d = new Date(end); d >= start; d.setDate(d.getDate() - 1)) {
+      const dateStr = dateToStr(d);
+      const today = getTodayDate();
+
+      // Find daily tasks active on this date
+      const dailyHabits = allTasks
+        .filter(t => t.type === 'daily' && t.created_at.split('T')[0] <= dateStr)
+        .filter(t => !t.is_archived || completions.some(c => c.task_id === t.id && c.completed_date === dateStr))
+        .map(t => {
+          const comp = compMap[`${t.id}_${dateStr}`];
+          return {
+            title: t.title,
+            completed: comp ? comp.is_completed : false,
+            failureNote: comp ? comp.failure_note : null
+          };
+        });
+
+      // One-time tasks completed on this date
+      const onceTasksCompleted = allTasks
+        .filter(t => t.type === 'once')
+        .filter(t => {
+          const comp = compMap[`${t.id}_${dateStr}`];
+          return comp && comp.is_completed;
+        })
+        .map(t => ({ title: t.title }));
+
+      // Completion percentage
+      const totalDaily = dailyHabits.length;
+      const completedDaily = dailyHabits.filter(h => h.completed).length;
+      const completionPercentage = totalDaily > 0 ? Math.round((completedDaily / totalDaily) * 100) : 0;
+
+      // Log data
+      const log = logMap[dateStr] || null;
+      let logObj = null;
+      if (log) {
+        const fieldValues = {};
+        logFields.forEach(f => {
+          const entry = log.entries ? log.entries.find(e => e.field_id === f.id) : null;
+          if (entry) fieldValues[f.name] = entry.value;
+        });
+        logObj = {
+          mood: log.mood,
+          notes: log.notes,
+          fields: fieldValues
+        };
+      }
+
+      days.push({
+        date: dateStr,
+        dailyHabits,
+        onceTasksCompleted,
+        completionPercentage,
+        totalDaily,
+        completedDaily,
+        log: logObj,
+        isFuture: dateStr > today
+      });
+    }
+
+    historyWeekData = days;
+    renderHistoryWeek();
+  } catch (error) {
+    console.error('Error loading history week:', error);
+    historyDaysContainer.innerHTML = '<p class="text-red-500 text-center py-8">Failed to load history data.</p>';
   }
+}
 
-  logHistoryContainer.innerHTML = `
-    <table class="log-history-table">
-      <thead>
-        <tr>
-          <th>Date</th>
-          ${fieldHeaders}
-          <th>Mood</th>
-          <th>Notes</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
+function renderHistoryWeek() {
+  if (!historyWeekData) return;
+
+  // Week summary
+  const nonFutureDays = historyWeekData.filter(d => !d.isFuture);
+  const daysWithTasks = nonFutureDays.filter(d => d.totalDaily > 0);
+  const avgCompletion = daysWithTasks.length > 0
+    ? Math.round(daysWithTasks.reduce((s, d) => s + d.completionPercentage, 0) / daysWithTasks.length)
+    : 0;
+  const daysAbove80 = daysWithTasks.filter(d => d.completionPercentage >= 80).length;
+  const daysWithLog = nonFutureDays.filter(d => d.log).length;
+  const moodDays = nonFutureDays.filter(d => d.log && d.log.mood);
+  const avgMood = moodDays.length > 0
+    ? (moodDays.reduce((s, d) => s + d.log.mood, 0) / moodDays.length).toFixed(1)
+    : '-';
+
+  historyWeekSummary.innerHTML = `
+    <div>
+      <div class="stat-value text-blue-600">${avgCompletion}%</div>
+      <div class="stat-label">Avg Completion</div>
+    </div>
+    <div>
+      <div class="stat-value text-green-600">${daysAbove80}/${daysWithTasks.length}</div>
+      <div class="stat-label">Days Above 80%</div>
+    </div>
+    <div>
+      <div class="stat-value">${avgMood === '-' ? '-' : avgMood}</div>
+      <div class="stat-label">Avg Mood</div>
+    </div>
+    <div>
+      <div class="stat-value text-purple-600">${daysWithLog}</div>
+      <div class="stat-label">Days Logged</div>
+    </div>
   `;
+
+  // Day cards
+  historyDaysContainer.innerHTML = historyWeekData.map(renderHistoryDayCard).join('');
+}
+
+function renderHistoryDayCard(day) {
+  if (day.isFuture) {
+    return `
+      <div class="history-day-card">
+        <div class="history-day-header bg-gray-50 text-gray-400">
+          <span>${formatDateLong(day.date)}</span>
+          <span>—</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const bgColor = getColorForPercentage(day.completionPercentage);
+  const hasAnyData = day.dailyHabits.length > 0 || day.onceTasksCompleted.length > 0 || day.log;
+
+  if (!hasAnyData) {
+    return `
+      <div class="history-day-card">
+        <div class="history-day-header ${bgColor}">
+          <span>${formatDateLong(day.date)}</span>
+          <span>No data</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Daily habits section
+  let habitsHtml = '';
+  if (day.dailyHabits.length > 0) {
+    const habitItems = day.dailyHabits.map(h => {
+      if (h.completed) {
+        return `<div class="history-task-item"><span class="task-icon text-green-600">&#10003;</span> ${escapeHtml(h.title)}</div>`;
+      } else {
+        const note = h.failureNote ? ` <span class="failure-note">— "${escapeHtml(h.failureNote)}"</span>` : '';
+        return `<div class="history-task-item history-task-failed"><span class="task-icon">&#10007;</span> ${escapeHtml(h.title)}${note}</div>`;
+      }
+    }).join('');
+    habitsHtml = `
+      <div class="mb-3">
+        <div class="history-section-label">Daily Habits</div>
+        ${habitItems}
+      </div>
+    `;
+  }
+
+  // One-time tasks section
+  let onceHtml = '';
+  if (day.onceTasksCompleted.length > 0) {
+    const onceItems = day.onceTasksCompleted.map(t =>
+      `<div class="history-task-item"><span class="task-icon text-green-600">&#10003;</span> ${escapeHtml(t.title)}</div>`
+    ).join('');
+    onceHtml = `
+      <div class="mb-3">
+        <div class="history-section-label">One-Time Tasks Completed</div>
+        ${onceItems}
+      </div>
+    `;
+  }
+
+  // Daily log section
+  let logHtml = '';
+  if (day.log) {
+    const moodHtml = day.log.mood
+      ? `<div class="history-field-item"><span class="field-label">Mood</span><div class="field-value">${getMoodEmoji(day.log.mood)} ${getMoodLabel(day.log.mood)}</div></div>`
+      : '';
+
+    const fieldEntries = Object.entries(day.log.fields || {});
+    const fieldsHtml = fieldEntries.map(([name, value]) =>
+      `<div class="history-field-item"><span class="field-label">${escapeHtml(name)}</span><div class="field-value">${escapeHtml(value)}</div></div>`
+    ).join('');
+
+    const notesHtml = day.log.notes
+      ? `<div class="history-notes">${escapeHtml(day.log.notes)}</div>`
+      : '';
+
+    if (moodHtml || fieldsHtml || notesHtml) {
+      logHtml = `
+        <div>
+          <div class="history-section-label">Daily Log</div>
+          <div class="history-field-grid">
+            ${moodHtml}
+            ${fieldsHtml}
+          </div>
+          ${notesHtml}
+        </div>
+      `;
+    }
+  }
+
+  return `
+    <div class="history-day-card">
+      <div class="history-day-header ${bgColor}">
+        <span>${formatDateLong(day.date)}</span>
+        <span>${day.completionPercentage}% (${day.completedDaily}/${day.totalDaily})</span>
+      </div>
+      <div class="history-day-body">
+        ${habitsHtml}
+        ${onceHtml}
+        ${logHtml}
+        ${!habitsHtml && !onceHtml && !logHtml ? '<p class="history-day-empty">No activity recorded</p>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function navigateHistoryWeek(direction) {
+  const newOffset = historyWeekOffset + direction;
+  if (newOffset < 0 || newOffset > 11) return;
+  historyWeekOffset = newOffset;
+  loadHistoryWeek();
 }
 
 // Export functionality
@@ -1284,7 +1540,7 @@ async function buildExportData() {
       }
     },
     daily_log: buildDailyLogExport(),
-    daily_log_history: buildDailyLogHistoryExport(),
+    daily_log_history: await buildDailyLogHistoryExport(),
     context_for_ai: {
       task_types_explanation: "daily = recurring habits tracked daily, once = one-time tasks tracked until completed",
       streak_criteria: "Streak continues when daily task completion ≥80%",
@@ -1313,10 +1569,24 @@ function buildDailyLogExport() {
   };
 }
 
-function buildDailyLogHistoryExport() {
-  if (logHistory.length === 0) return null;
+async function buildDailyLogHistoryExport() {
+  // Fetch fresh 28-day log data for export (independent of history view state)
+  const today = getTodayDate();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 27);
+  const startStr = startDate.toISOString().split('T')[0];
 
-  const entries = logHistory.map(log => {
+  let exportLogHistory;
+  try {
+    exportLogHistory = await fetchLogHistoryData(startStr, today);
+  } catch (error) {
+    console.error('Error fetching log history for export:', error);
+    return null;
+  }
+
+  if (exportLogHistory.length === 0) return null;
+
+  const entries = exportLogHistory.map(log => {
     const fields = {};
     logFields.forEach(f => {
       const entry = log.entries.find(e => e.field_id === f.id);
@@ -1336,7 +1606,7 @@ function buildDailyLogHistoryExport() {
     period: "Last 28 days",
     fields_tracked: logFields.map(f => f.name),
     entries,
-    patterns: calculateLogPatterns(logHistory)
+    patterns: calculateLogPatterns(exportLogHistory)
   };
 }
 

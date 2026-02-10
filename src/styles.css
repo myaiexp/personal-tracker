@@ -118,7 +118,6 @@ button:active {
 #daily-tasks-empty,
 #once-tasks-empty,
 #log-fields-empty,
-#log-history-empty,
 #manage-fields-empty {
   font-style: italic;
 }
@@ -188,6 +187,119 @@ button:active {
   padding: 0.5rem 0.75rem;
   background: #f9fafb;
   border-radius: 0.5rem;
+}
+
+/* History View */
+.history-day-card {
+  background: white;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.history-day-header {
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.history-day-body {
+  padding: 1rem;
+}
+
+.history-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  margin-bottom: 0.375rem;
+}
+
+.history-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.history-task-item .task-icon {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.history-task-failed {
+  color: #dc2626;
+}
+
+.history-task-failed .failure-note {
+  font-style: italic;
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.history-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+
+.history-field-item {
+  font-size: 0.875rem;
+}
+
+.history-field-item .field-label {
+  color: #6b7280;
+  font-size: 0.75rem;
+}
+
+.history-field-item .field-value {
+  color: #111827;
+  font-weight: 500;
+}
+
+.history-notes {
+  font-size: 0.875rem;
+  color: #374151;
+  background: #f9fafb;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.history-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1rem;
+  text-align: center;
+}
+
+.history-summary .stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.history-summary .stat-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.week-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.history-day-empty {
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.875rem;
 }
 
 /* Mobile Responsiveness */
