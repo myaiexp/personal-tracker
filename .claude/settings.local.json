@@ -4,7 +4,12 @@
       "Bash(npm install:*)",
       "Bash(npm run build:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(ssh root@94.237.37.88 \"node --version && npm --version\")",
+      "Bash(ssh:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(curl:*)"
     ]
   }
 }
