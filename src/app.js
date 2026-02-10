@@ -13,6 +13,10 @@ let tasks = [];
 let streaks = { current: 0, longest: 0 };
 let history = [];
 let currentTaskIdForFailure = null;
+let logFields = [];
+let todayLog = null;
+let todayEntries = {};
+let logHistory = [];
 
 // DOM Elements
 const addTaskForm = document.getElementById('add-task-form');
@@ -30,6 +34,13 @@ const failureNoteInput = document.getElementById('failure-note-input');
 const failureNoteError = document.getElementById('failure-note-error');
 const failureModalCancel = document.getElementById('failure-modal-cancel');
 const failureModalSubmit = document.getElementById('failure-modal-submit');
+const logFieldsContainer = document.getElementById('log-fields-container');
+const logFieldsEmpty = document.getElementById('log-fields-empty');
+const dailyLogNotes = document.getElementById('daily-log-notes');
+const dailyLogSaveStatus = document.getElementById('daily-log-save-status');
+const manageFieldsModal = document.getElementById('manage-fields-modal');
+const logHistoryContainer = document.getElementById('log-history-container');
+const logHistoryEmpty = document.getElementById('log-history-empty');
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -53,6 +64,8 @@ async function initializeApp() {
   updateCurrentDate();
   await loadTasks();
   await loadStreaksAndHistory();
+  await loadDailyLog();
+  await loadLogHistory();
 }
 
 // Authentication
@@ -154,7 +167,25 @@ function setupEventListeners() {
     if (e.key === 'Escape' && !failureModal.classList.contains('hidden')) {
       hideFailureModal();
     }
+    if (e.key === 'Escape' && !manageFieldsModal.classList.contains('hidden')) {
+      hideManageFieldsModal();
+    }
   });
+
+  // Daily Log event listeners
+  document.getElementById('manage-fields-btn').addEventListener('click', showManageFieldsModal);
+  document.getElementById('manage-fields-close').addEventListener('click', hideManageFieldsModal);
+  manageFieldsModal.addEventListener('click', (e) => {
+    if (e.target === manageFieldsModal) hideManageFieldsModal();
+  });
+  document.getElementById('add-field-btn').addEventListener('click', handleAddField);
+  document.getElementById('new-field-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); handleAddField(); }
+  });
+  document.querySelectorAll('.mood-btn').forEach(btn => {
+    btn.addEventListener('click', handleMoodSelect);
+  });
+  dailyLogNotes.addEventListener('input', debounce(handleNotesChange, 1000));
 }
 
 // Date utilities
@@ -291,6 +322,156 @@ async function markIncomplete(taskId, date, failureNote) {
     if (error) throw error;
     return data;
   }
+}
+
+// Daily Log API calls
+async function fetchLogFields() {
+  const { data, error } = await supabaseClient
+    .from('log_fields')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .eq('is_active', true)
+    .order('display_order', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function createLogField(name, type) {
+  const maxOrder = logFields.length > 0
+    ? Math.max(...logFields.map(f => f.display_order)) + 1
+    : 0;
+
+  const { data, error } = await supabaseClient
+    .from('log_fields')
+    .insert([{ name, type, user_id: currentUser.id, display_order: maxOrder }])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function deleteLogField(id) {
+  const { error } = await supabaseClient
+    .from('log_fields')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+async function updateLogFieldOrder(id, newOrder) {
+  const { error } = await supabaseClient
+    .from('log_fields')
+    .update({ display_order: newOrder })
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+async function fetchTodayLog() {
+  const today = getTodayDate();
+  const { data, error } = await supabaseClient
+    .from('daily_logs')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .eq('log_date', today)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function upsertDailyLog(updates) {
+  const today = getTodayDate();
+
+  if (todayLog) {
+    const { data, error } = await supabaseClient
+      .from('daily_logs')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', todayLog.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } else {
+    const { data, error } = await supabaseClient
+      .from('daily_logs')
+      .insert([{ user_id: currentUser.id, log_date: today, ...updates }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+}
+
+async function fetchTodayEntries(logId) {
+  const { data, error } = await supabaseClient
+    .from('log_entries')
+    .select('*')
+    .eq('daily_log_id', logId);
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function upsertLogEntry(logId, fieldId, value) {
+  const { data: existing } = await supabaseClient
+    .from('log_entries')
+    .select('id')
+    .eq('daily_log_id', logId)
+    .eq('field_id', fieldId)
+    .maybeSingle();
+
+  if (existing) {
+    const { data, error } = await supabaseClient
+      .from('log_entries')
+      .update({ value, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } else {
+    const { data, error } = await supabaseClient
+      .from('log_entries')
+      .insert([{ daily_log_id: logId, field_id: fieldId, value }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+}
+
+async function fetchLogHistoryData(startDate, endDate) {
+  const { data: logs, error: logsError } = await supabaseClient
+    .from('daily_logs')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .gte('log_date', startDate)
+    .lte('log_date', endDate)
+    .order('log_date', { ascending: false });
+
+  if (logsError) throw logsError;
+  if (!logs || logs.length === 0) return [];
+
+  const logIds = logs.map(l => l.id);
+  const { data: entries, error: entriesError } = await supabaseClient
+    .from('log_entries')
+    .select('*')
+    .in('daily_log_id', logIds);
+
+  if (entriesError) throw entriesError;
+
+  return logs.map(log => ({
+    ...log,
+    entries: (entries || []).filter(e => e.daily_log_id === log.id)
+  }));
 }
 
 // Task management
@@ -617,12 +798,366 @@ function getColorForPercentage(percentage) {
 async function refreshAll() {
   await loadTasks();
   await loadStreaksAndHistory();
+  await loadDailyLog();
+  await loadLogHistory();
 }
 
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Utility
+function debounce(func, wait) {
+  let timeout;
+  return function (...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+}
+
+// Daily Log management
+async function loadDailyLog() {
+  try {
+    logFields = await fetchLogFields();
+    todayLog = await fetchTodayLog();
+
+    if (todayLog) {
+      const entries = await fetchTodayEntries(todayLog.id);
+      todayEntries = {};
+      entries.forEach(e => { todayEntries[e.field_id] = e.value; });
+    } else {
+      todayEntries = {};
+    }
+
+    renderDailyLogSection();
+  } catch (error) {
+    console.error('Error loading daily log:', error);
+  }
+}
+
+function renderDailyLogSection() {
+  // Render dynamic fields
+  if (logFields.length === 0) {
+    logFieldsContainer.innerHTML = '';
+    logFieldsEmpty.classList.remove('hidden');
+  } else {
+    logFieldsEmpty.classList.add('hidden');
+    const cols = logFields.length === 1 ? 'grid-cols-1' :
+                 logFields.length === 2 ? 'sm:grid-cols-2' :
+                 'sm:grid-cols-2 md:grid-cols-3';
+    logFieldsContainer.className = `grid gap-4 mb-4 ${cols}`;
+
+    logFieldsContainer.innerHTML = logFields.map(field => {
+      const value = todayEntries[field.id] || '';
+      let inputHtml;
+
+      if (field.type === 'time') {
+        inputHtml = `<input type="time" class="log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" />`;
+      } else if (field.type === 'number') {
+        inputHtml = `<input type="number" class="log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" placeholder="0" />`;
+      } else {
+        inputHtml = `<input type="text" class="log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" placeholder="Enter value..." />`;
+      }
+
+      return `
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">${escapeHtml(field.name)}</label>
+          ${inputHtml}
+        </div>
+      `;
+    }).join('');
+
+    // Attach field input listeners
+    document.querySelectorAll('.log-field-input').forEach(input => {
+      if (input.type === 'time' || input.type === 'number') {
+        input.addEventListener('change', handleFieldChange);
+      } else {
+        input.addEventListener('input', debounce(function () {
+          handleFieldChange({ target: input });
+        }, 1000));
+      }
+    });
+  }
+
+  // Render mood state
+  document.querySelectorAll('.mood-btn').forEach(btn => {
+    if (todayLog && parseInt(btn.dataset.mood) === todayLog.mood) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // Render notes
+  dailyLogNotes.value = todayLog?.notes || '';
+
+  // Clear save status on load
+  dailyLogSaveStatus.textContent = '';
+}
+
+async function handleFieldChange(e) {
+  const fieldId = e.target.dataset.fieldId;
+  const value = e.target.value;
+
+  setSaveStatus('saving');
+  try {
+    // Ensure daily_log row exists
+    if (!todayLog) {
+      todayLog = await upsertDailyLog({});
+    }
+
+    if (value) {
+      await upsertLogEntry(todayLog.id, fieldId, value);
+      todayEntries[fieldId] = value;
+    }
+
+    setSaveStatus('saved');
+  } catch (error) {
+    console.error('Error saving field:', error);
+    setSaveStatus('error');
+  }
+}
+
+async function handleMoodSelect(e) {
+  const btn = e.target.closest('.mood-btn');
+  if (!btn) return;
+  const selectedMood = parseInt(btn.dataset.mood);
+
+  // Update UI immediately
+  document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  setSaveStatus('saving');
+  try {
+    todayLog = await upsertDailyLog({ mood: selectedMood });
+    setSaveStatus('saved');
+  } catch (error) {
+    console.error('Error saving mood:', error);
+    setSaveStatus('error');
+  }
+}
+
+async function handleNotesChange() {
+  const notes = dailyLogNotes.value.trim() || null;
+
+  setSaveStatus('saving');
+  try {
+    todayLog = await upsertDailyLog({ notes });
+    setSaveStatus('saved');
+  } catch (error) {
+    console.error('Error saving notes:', error);
+    setSaveStatus('error');
+  }
+}
+
+function setSaveStatus(state) {
+  if (state === 'saving') {
+    dailyLogSaveStatus.textContent = 'Saving...';
+    dailyLogSaveStatus.className = 'font-medium saving';
+  } else if (state === 'saved') {
+    dailyLogSaveStatus.textContent = 'Saved';
+    dailyLogSaveStatus.className = 'font-medium saved';
+  } else if (state === 'error') {
+    dailyLogSaveStatus.textContent = 'Failed to save';
+    dailyLogSaveStatus.className = 'font-medium error';
+  }
+}
+
+// Manage Fields Modal
+function showManageFieldsModal() {
+  manageFieldsModal.classList.remove('hidden');
+  renderManageFieldsList();
+}
+
+function hideManageFieldsModal() {
+  manageFieldsModal.classList.add('hidden');
+}
+
+function renderManageFieldsList() {
+  const list = document.getElementById('manage-fields-list');
+  const empty = document.getElementById('manage-fields-empty');
+
+  if (logFields.length === 0) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    list.innerHTML = logFields.map((field, index) => `
+      <div class="field-item" data-field-id="${field.id}">
+        <div class="flex items-center gap-2">
+          <div class="flex flex-col gap-0.5">
+            <button class="field-move-up p-0.5 text-gray-400 hover:text-gray-700 ${index === 0 ? 'invisible' : ''}" data-field-id="${field.id}" title="Move up">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+            </button>
+            <button class="field-move-down p-0.5 text-gray-400 hover:text-gray-700 ${index === logFields.length - 1 ? 'invisible' : ''}" data-field-id="${field.id}" title="Move down">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+          </div>
+          <span class="font-medium text-gray-800">${escapeHtml(field.name)}</span>
+          <span class="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded">${field.type}</span>
+        </div>
+        <button class="field-delete text-red-500 hover:text-red-700 text-sm font-medium" data-field-id="${field.id}">Delete</button>
+      </div>
+    `).join('');
+
+    // Attach listeners
+    list.querySelectorAll('.field-delete').forEach(btn => {
+      btn.addEventListener('click', handleDeleteField);
+    });
+    list.querySelectorAll('.field-move-up').forEach(btn => {
+      btn.addEventListener('click', () => handleMoveField(btn.dataset.fieldId, -1));
+    });
+    list.querySelectorAll('.field-move-down').forEach(btn => {
+      btn.addEventListener('click', () => handleMoveField(btn.dataset.fieldId, 1));
+    });
+  }
+}
+
+async function handleAddField() {
+  const nameInput = document.getElementById('new-field-name');
+  const typeSelect = document.getElementById('new-field-type');
+  const name = nameInput.value.trim();
+  const type = typeSelect.value;
+
+  if (!name) return;
+
+  try {
+    await createLogField(name, type);
+    nameInput.value = '';
+    logFields = await fetchLogFields();
+    renderManageFieldsList();
+    renderDailyLogSection();
+  } catch (error) {
+    console.error('Error adding field:', error);
+    alert('Failed to add field. Please try again.');
+  }
+}
+
+async function handleDeleteField(e) {
+  const fieldId = e.target.dataset.fieldId;
+  const field = logFields.find(f => f.id === fieldId);
+  if (!field) return;
+
+  if (confirm(`Delete "${field.name}"? This will remove all historical data for this field.`)) {
+    try {
+      await deleteLogField(fieldId);
+      logFields = await fetchLogFields();
+      delete todayEntries[fieldId];
+      renderManageFieldsList();
+      renderDailyLogSection();
+      await loadLogHistory();
+    } catch (error) {
+      console.error('Error deleting field:', error);
+      alert('Failed to delete field. Please try again.');
+    }
+  }
+}
+
+async function handleMoveField(fieldId, direction) {
+  const index = logFields.findIndex(f => f.id === fieldId);
+  const swapIndex = index + direction;
+  if (swapIndex < 0 || swapIndex >= logFields.length) return;
+
+  const currentOrder = logFields[index].display_order;
+  const swapOrder = logFields[swapIndex].display_order;
+
+  try {
+    await Promise.all([
+      updateLogFieldOrder(fieldId, swapOrder),
+      updateLogFieldOrder(logFields[swapIndex].id, currentOrder)
+    ]);
+    logFields = await fetchLogFields();
+    renderManageFieldsList();
+    renderDailyLogSection();
+  } catch (error) {
+    console.error('Error reordering field:', error);
+  }
+}
+
+// Log History
+async function loadLogHistory() {
+  try {
+    const today = getTodayDate();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 27);
+    const startStr = startDate.toISOString().split('T')[0];
+
+    logHistory = await fetchLogHistoryData(startStr, today);
+    renderLogHistoryTable();
+  } catch (error) {
+    console.error('Error loading log history:', error);
+  }
+}
+
+function getMoodLabel(mood) {
+  const labels = { 1: 'Very Bad', 2: 'Bad', 3: 'Okay', 4: 'Good', 5: 'Great' };
+  return labels[mood] || '';
+}
+
+function getMoodEmoji(mood) {
+  const emojis = { 1: '😢', 2: '😟', 3: '😐', 4: '🙂', 5: '😄' };
+  return emojis[mood] || '';
+}
+
+function renderLogHistoryTable() {
+  if (logHistory.length === 0 && logFields.length === 0) {
+    logHistoryContainer.innerHTML = '';
+    logHistoryEmpty.classList.remove('hidden');
+    return;
+  }
+
+  logHistoryEmpty.classList.add('hidden');
+
+  // Build field columns from current fields
+  const fieldHeaders = logFields.map(f =>
+    `<th>${escapeHtml(f.name)}</th>`
+  ).join('');
+
+  // Build 28-day rows (logHistory is already sorted desc)
+  const rows = logHistory.map(log => {
+    const fieldCells = logFields.map(f => {
+      const entry = log.entries.find(e => e.field_id === f.id);
+      return `<td>${entry ? escapeHtml(entry.value) : '<span class="text-gray-300">-</span>'}</td>`;
+    }).join('');
+
+    const moodCell = log.mood
+      ? `<td title="${getMoodLabel(log.mood)}">${getMoodEmoji(log.mood)}</td>`
+      : '<td><span class="text-gray-300">-</span></td>';
+
+    const notesCell = log.notes
+      ? `<td class="max-w-xs truncate" title="${escapeHtml(log.notes)}">${escapeHtml(log.notes)}</td>`
+      : '<td><span class="text-gray-300">-</span></td>';
+
+    return `<tr>
+      <td class="font-medium">${formatDate(log.log_date)}</td>
+      ${fieldCells}
+      ${moodCell}
+      ${notesCell}
+    </tr>`;
+  }).join('');
+
+  if (logHistory.length === 0) {
+    logHistoryContainer.innerHTML = '<p class="text-gray-400 text-center py-4">No log entries yet. Start filling in your daily log above!</p>';
+    return;
+  }
+
+  logHistoryContainer.innerHTML = `
+    <table class="log-history-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          ${fieldHeaders}
+          <th>Mood</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
 }
 
 // Export functionality
@@ -660,7 +1195,7 @@ function buildWeekSummaries(history) {
   return weeks;
 }
 
-function buildExportData() {
+async function buildExportData() {
   const today = getTodayDate();
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -748,17 +1283,121 @@ function buildExportData() {
         total_days_above_80: daysAbove80
       }
     },
+    daily_log: buildDailyLogExport(),
+    daily_log_history: buildDailyLogHistoryExport(),
     context_for_ai: {
       task_types_explanation: "daily = recurring habits tracked daily, once = one-time tasks tracked until completed",
       streak_criteria: "Streak continues when daily task completion ≥80%",
+      mood_scale: "1 = Very Bad, 2 = Bad, 3 = Okay, 4 = Good, 5 = Great",
+      daily_log_fields: "User-configured tracking fields with types (time/number/text). Field values provide daily context for pattern analysis.",
       data_freshness: "All data reflects current state at export time"
     }
   };
 }
 
+function buildDailyLogExport() {
+  if (!todayLog && Object.keys(todayEntries).length === 0) return null;
+
+  const fields = {};
+  logFields.forEach(f => {
+    if (todayEntries[f.id]) {
+      fields[f.name] = todayEntries[f.id];
+    }
+  });
+
+  return {
+    mood: todayLog?.mood || null,
+    mood_label: todayLog?.mood ? getMoodLabel(todayLog.mood) : null,
+    notes: todayLog?.notes || null,
+    fields: Object.keys(fields).length > 0 ? fields : null
+  };
+}
+
+function buildDailyLogHistoryExport() {
+  if (logHistory.length === 0) return null;
+
+  const entries = logHistory.map(log => {
+    const fields = {};
+    logFields.forEach(f => {
+      const entry = log.entries.find(e => e.field_id === f.id);
+      if (entry) fields[f.name] = entry.value;
+    });
+
+    return {
+      date: log.log_date,
+      mood: log.mood,
+      mood_label: log.mood ? getMoodLabel(log.mood) : null,
+      notes: log.notes,
+      fields: Object.keys(fields).length > 0 ? fields : null
+    };
+  });
+
+  return {
+    period: "Last 28 days",
+    fields_tracked: logFields.map(f => f.name),
+    entries,
+    patterns: calculateLogPatterns(logHistory)
+  };
+}
+
+function calculateLogPatterns(logs) {
+  if (logs.length === 0) return null;
+
+  const moodsRecorded = logs.filter(l => l.mood !== null);
+  const avgMood = moodsRecorded.length > 0
+    ? parseFloat((moodsRecorded.reduce((sum, l) => sum + l.mood, 0) / moodsRecorded.length).toFixed(1))
+    : null;
+
+  // Mood trend: compare first half vs second half
+  let moodTrend = null;
+  if (moodsRecorded.length >= 4) {
+    const sorted = [...moodsRecorded].sort((a, b) => a.log_date.localeCompare(b.log_date));
+    const mid = Math.floor(sorted.length / 2);
+    const firstAvg = sorted.slice(0, mid).reduce((s, l) => s + l.mood, 0) / mid;
+    const secondAvg = sorted.slice(mid).reduce((s, l) => s + l.mood, 0) / (sorted.length - mid);
+
+    if (secondAvg > firstAvg + 0.3) moodTrend = 'improving';
+    else if (secondAvg < firstAvg - 0.3) moodTrend = 'declining';
+    else moodTrend = 'stable';
+  }
+
+  // Field averages (for time and number fields)
+  const fieldAverages = {};
+  logFields.forEach(f => {
+    const values = logs
+      .map(l => l.entries.find(e => e.field_id === f.id))
+      .filter(e => e && e.value);
+
+    if (values.length === 0) return;
+
+    if (f.type === 'number') {
+      const nums = values.map(e => parseFloat(e.value)).filter(n => !isNaN(n));
+      if (nums.length > 0) {
+        fieldAverages[f.name] = parseFloat((nums.reduce((s, n) => s + n, 0) / nums.length).toFixed(1));
+      }
+    } else if (f.type === 'time') {
+      const minutes = values.map(e => {
+        const [h, m] = e.value.split(':').map(Number);
+        return h * 60 + m;
+      }).filter(n => !isNaN(n));
+      if (minutes.length > 0) {
+        const avgMin = Math.round(minutes.reduce((s, n) => s + n, 0) / minutes.length);
+        fieldAverages[f.name] = `${Math.floor(avgMin / 60).toString().padStart(2, '0')}:${(avgMin % 60).toString().padStart(2, '0')}`;
+      }
+    }
+  });
+
+  return {
+    avg_mood: avgMood,
+    mood_trend: moodTrend,
+    days_logged: logs.length,
+    field_averages: Object.keys(fieldAverages).length > 0 ? fieldAverages : null
+  };
+}
+
 async function handleExportToClipboard() {
   try {
-    const exportData = buildExportData();
+    const exportData = await buildExportData();
     const jsonString = JSON.stringify(exportData, null, 2);
 
     // Use Clipboard API (modern approach)

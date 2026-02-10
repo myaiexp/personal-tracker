@@ -116,8 +116,78 @@ button:active {
 
 /* Empty State */
 #daily-tasks-empty,
-#once-tasks-empty {
+#once-tasks-empty,
+#log-fields-empty,
+#log-history-empty,
+#manage-fields-empty {
   font-style: italic;
+}
+
+/* Mood Button States */
+.mood-btn.active {
+  border-color: #3b82f6;
+  background-color: #dbeafe;
+  transform: scale(1.05);
+}
+
+.mood-btn:active {
+  transform: scale(0.95);
+}
+
+/* Daily Log Save Status */
+#daily-log-save-status.saving {
+  color: #f59e0b;
+}
+
+#daily-log-save-status.saved {
+  color: #10b981;
+}
+
+#daily-log-save-status.error {
+  color: #ef4444;
+}
+
+/* Log History Table */
+.log-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.log-history-table th {
+  position: sticky;
+  top: 0;
+  background: #f9fafb;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.log-history-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f3f4f6;
+  white-space: nowrap;
+}
+
+.log-history-table tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+.log-history-table tr:hover {
+  background-color: #eff6ff;
+}
+
+/* Manage Fields Modal - field item */
+.field-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: #f9fafb;
+  border-radius: 0.5rem;
 }
 
 /* Mobile Responsiveness */
