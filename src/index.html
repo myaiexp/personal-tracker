@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Task Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-6xl">
+
+    <!-- Header Section -->
+    <header class="mb-8">
+      <h1 class="text-4xl font-bold text-gray-800 mb-2">Daily Task Tracker</h1>
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <p class="text-lg text-gray-600" id="current-date">Loading...</p>
+        <div class="flex gap-6">
+          <div class="text-center">
+            <p class="text-sm text-gray-500">Current Streak</p>
+            <p class="text-2xl font-bold text-blue-600" id="current-streak">0</p>
+          </div>
+          <div class="text-center">
+            <p class="text-sm text-gray-500">Longest Streak</p>
+            <p class="text-2xl font-bold text-green-600" id="longest-streak">0</p>
+          </div>
+          <div class="text-center">
+            <button
+              id="export-btn"
+              class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-semibold text-sm flex items-center gap-2"
+              title="Export current progress to clipboard (AI-friendly format)"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span class="hidden sm:inline">Export</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Task Input Section -->
+    <section class="bg-white rounded-lg shadow-md p-6 mb-8">
+      <h2 class="text-2xl font-semibold text-gray-800 mb-4">Add New Task</h2>
+      <form id="add-task-form" class="flex flex-col sm:flex-row gap-4">
+        <input
+          type="text"
+          id="task-title"
+          placeholder="Enter task title..."
+          class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+        <div class="flex gap-4">
+          <label class="flex items-center cursor-pointer">
+            <input type="radio" name="task-type" value="daily" class="mr-2" checked />
+            <span class="text-gray-700">Daily Habit</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input type="radio" name="task-type" value="once" class="mr-2" />
+            <span class="text-gray-700">One-Time Task</span>
+          </label>
+        </div>
+        <button
+          type="submit"
+          class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+        >
+          Add Task
+        </button>
+      </form>
+    </section>
+
+    <!-- Task Lists Section -->
+    <div class="grid md:grid-cols-2 gap-8 mb-8">
+
+      <!-- Daily Habits -->
+      <section class="bg-white rounded-lg shadow-md p-6">
+        <h2 class="text-2xl font-semibold text-gray-800 mb-4">Daily Habits</h2>
+        <div id="daily-tasks" class="space-y-3">
+          <!-- Daily tasks will be inserted here -->
+        </div>
+        <p id="daily-tasks-empty" class="text-gray-400 text-center py-8 hidden">
+          No daily habits yet. Add one above!
+        </p>
+      </section>
+
+      <!-- One-Time Tasks -->
+      <section class="bg-white rounded-lg shadow-md p-6">
+        <h2 class="text-2xl font-semibold text-gray-800 mb-4">One-Time Tasks</h2>
+        <div id="once-tasks" class="space-y-3">
+          <!-- One-time tasks will be inserted here -->
+        </div>
+        <p id="once-tasks-empty" class="text-gray-400 text-center py-8 hidden">
+          No one-time tasks yet. Add one above!
+        </p>
+      </section>
+
+    </div>
+
+    <!-- Calendar View Section -->
+    <section class="bg-white rounded-lg shadow-md p-6 mb-8">
+      <h2 class="text-2xl font-semibold text-gray-800 mb-4">Last 28 Days</h2>
+      <div id="calendar" class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+        <!-- Calendar cells will be inserted here -->
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Toast Notification for Copy Feedback -->
+  <div id="copy-toast" class="fixed bottom-8 right-8 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg hidden transform transition-all duration-300 z-50">
+    <p class="font-semibold">Copied to clipboard!</p>
+    <p class="text-sm">Ready to paste into your AI chat</p>
+  </div>
+
+  <!-- Failure Notes Modal -->
+  <div id="failure-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="p-6">
+          <h3 class="text-xl font-semibold text-gray-800 mb-4">Why are you unchecking this task?</h3>
+          <p class="text-gray-600 mb-4">Please provide a brief explanation:</p>
+          <textarea
+            id="failure-note-input"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            rows="4"
+            placeholder="e.g., Felt too tired, ran out of time, etc."
+          ></textarea>
+          <p id="failure-note-error" class="text-red-600 text-sm mt-2 hidden">
+            Please provide a reason before continuing.
+          </p>
+          <div class="flex gap-3 mt-6">
+            <button
+              id="failure-modal-cancel"
+              class="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              id="failure-modal-submit"
+              class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+            >
+              Submit
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
