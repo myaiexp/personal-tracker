@@ -53,6 +53,16 @@ const historyWeekLabel = document.getElementById('history-week-label');
 const historyWeekSummary = document.getElementById('history-week-summary');
 const historyDaysContainer = document.getElementById('history-days');
 
+// Edit history modal DOM elements
+const editHistoryModal = document.getElementById('edit-history-modal');
+const editHistoryDate = document.getElementById('edit-history-date');
+const editHistoryCancel = document.getElementById('edit-history-cancel');
+const editHistorySave = document.getElementById('edit-history-save');
+
+// State for editing
+let currentEditDate = null;
+let currentEditData = null;
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
   checkConfig();
@@ -180,6 +190,9 @@ function setupEventListeners() {
     if (e.key === 'Escape' && !manageFieldsModal.classList.contains('hidden')) {
       hideManageFieldsModal();
     }
+    if (e.key === 'Escape' && !editHistoryModal.classList.contains('hidden')) {
+      hideEditHistoryModal();
+    }
   });
 
   // History view event listeners
@@ -202,6 +215,13 @@ function setupEventListeners() {
     btn.addEventListener('click', handleMoodSelect);
   });
   dailyLogNotes.addEventListener('input', debounce(handleNotesChange, 1000));
+
+  // Edit History Modal event listeners
+  editHistoryCancel.addEventListener('click', hideEditHistoryModal);
+  editHistorySave.addEventListener('click', handleEditHistorySave);
+  editHistoryModal.addEventListener('click', (e) => {
+    if (e.target === editHistoryModal) hideEditHistoryModal();
+  });
 }
 
 // Date utilities
@@ -1302,6 +1322,11 @@ function renderHistoryWeek() {
 
   // Day cards
   historyDaysContainer.innerHTML = historyWeekData.map(renderHistoryDayCard).join('');
+
+  // Attach edit button listeners
+  document.querySelectorAll('.edit-history-btn').forEach(btn => {
+    btn.addEventListener('click', handleEditHistoryClick);
+  });
 }
 
 function renderHistoryDayCard(day) {
@@ -1319,12 +1344,25 @@ function renderHistoryDayCard(day) {
   const bgColor = getColorForPercentage(day.completionPercentage);
   const hasAnyData = day.dailyHabits.length > 0 || day.onceTasksCompleted.length > 0 || day.log;
 
+  const editButton = `
+    <button
+      class="edit-history-btn px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+      data-date="${day.date}"
+      title="Edit this day's data"
+    >
+      Edit
+    </button>
+  `;
+
   if (!hasAnyData) {
     return `
       <div class="history-day-card">
-        <div class="history-day-header ${bgColor}">
-          <span>${formatDateLong(day.date)}</span>
-          <span>No data</span>
+        <div class="history-day-header ${bgColor} flex justify-between items-center">
+          <div>
+            <span>${formatDateLong(day.date)}</span>
+            <span class="ml-2">No data</span>
+          </div>
+          ${editButton}
         </div>
       </div>
     `;
@@ -1395,9 +1433,12 @@ function renderHistoryDayCard(day) {
 
   return `
     <div class="history-day-card">
-      <div class="history-day-header ${bgColor}">
-        <span>${formatDateLong(day.date)}</span>
-        <span>${day.completionPercentage}% (${day.completedDaily}/${day.totalDaily})</span>
+      <div class="history-day-header ${bgColor} flex justify-between items-center">
+        <div>
+          <span>${formatDateLong(day.date)}</span>
+          <span class="ml-2">${day.completionPercentage}% (${day.completedDaily}/${day.totalDaily})</span>
+        </div>
+        ${editButton}
       </div>
       <div class="history-day-body">
         ${habitsHtml}
@@ -1414,6 +1455,307 @@ function navigateHistoryWeek(direction) {
   if (newOffset < 0 || newOffset > 11) return;
   historyWeekOffset = newOffset;
   loadHistoryWeek();
+}
+
+// ========== Edit History ==========
+
+async function handleEditHistoryClick(e) {
+  const dateStr = e.target.dataset.date;
+  if (!dateStr) return;
+
+  // Prevent editing future dates
+  const today = getTodayDate();
+  if (dateStr > today) {
+    alert('Cannot edit future dates');
+    return;
+  }
+
+  currentEditDate = dateStr;
+  await showEditHistoryModal(dateStr);
+}
+
+async function showEditHistoryModal(dateStr) {
+  // Set the date label
+  editHistoryDate.textContent = formatDateLong(dateStr);
+
+  // Fetch all necessary data
+  const [allTasks, completions, logData, fields] = await Promise.all([
+    fetchAllTasksIncludingArchived(),
+    fetchWeekCompletions(dateStr, dateStr),
+    fetchLogHistoryData(dateStr, dateStr),
+    fetchLogFields()
+  ]);
+
+  // Build completions map
+  const compMap = {};
+  completions.forEach(c => {
+    compMap[`${c.task_id}_${c.completed_date}`] = c;
+  });
+
+  // Find daily tasks active on this date
+  const dailyTasks = allTasks
+    .filter(t => t.type === 'daily' && t.created_at.split('T')[0] <= dateStr)
+    .map(t => {
+      const comp = compMap[`${t.id}_${dateStr}`];
+      return {
+        id: t.id,
+        title: t.title,
+        completed: comp ? comp.is_completed : false,
+        failureNote: comp ? comp.failure_note : null,
+        completionId: comp ? comp.id : null
+      };
+    });
+
+  // Find one-time tasks that have any completion on this date
+  const onceTasks = allTasks
+    .filter(t => t.type === 'once')
+    .filter(t => compMap[`${t.id}_${dateStr}`])
+    .map(t => {
+      const comp = compMap[`${t.id}_${dateStr}`];
+      return {
+        id: t.id,
+        title: t.title,
+        completed: comp ? comp.is_completed : false,
+        completionId: comp ? comp.id : null
+      };
+    });
+
+  // Get log data
+  const log = logData.length > 0 ? logData[0] : null;
+  const logEntries = {};
+  if (log && log.entries) {
+    log.entries.forEach(e => {
+      logEntries[e.field_id] = e.value;
+    });
+  }
+
+  // Store current edit data
+  currentEditData = {
+    date: dateStr,
+    dailyTasks,
+    onceTasks,
+    log,
+    logEntries,
+    fields
+  };
+
+  // Render daily tasks
+  const dailyTasksContainer = document.getElementById('edit-daily-tasks');
+  const dailyTasksEmpty = document.getElementById('edit-daily-tasks-empty');
+  if (dailyTasks.length === 0) {
+    dailyTasksContainer.innerHTML = '';
+    dailyTasksEmpty.classList.remove('hidden');
+  } else {
+    dailyTasksEmpty.classList.add('hidden');
+    dailyTasksContainer.innerHTML = dailyTasks.map(t => {
+      const checkedAttr = t.completed ? 'checked' : '';
+      const failureNoteHtml = t.failureNote && !t.completed
+        ? `<span class="text-xs text-red-600 block mt-1">Note: ${escapeHtml(t.failureNote)}</span>`
+        : '';
+      return `
+        <div class="flex items-start gap-3 p-2 bg-gray-50 rounded">
+          <input
+            type="checkbox"
+            class="edit-task-checkbox w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer mt-0.5"
+            ${checkedAttr}
+            data-task-id="${t.id}"
+            data-task-type="daily"
+          />
+          <div class="flex-1">
+            <span class="text-gray-800">${escapeHtml(t.title)}</span>
+            ${failureNoteHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Render one-time tasks
+  const onceTasksContainer = document.getElementById('edit-once-tasks');
+  const onceTasksEmpty = document.getElementById('edit-once-tasks-empty');
+  if (onceTasks.length === 0) {
+    onceTasksContainer.innerHTML = '';
+    onceTasksEmpty.classList.remove('hidden');
+  } else {
+    onceTasksEmpty.classList.add('hidden');
+    onceTasksContainer.innerHTML = onceTasks.map(t => {
+      const checkedAttr = t.completed ? 'checked' : '';
+      return `
+        <div class="flex items-center gap-3 p-2 bg-gray-50 rounded">
+          <input
+            type="checkbox"
+            class="edit-task-checkbox w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            ${checkedAttr}
+            data-task-id="${t.id}"
+            data-task-type="once"
+          />
+          <span class="flex-1 text-gray-800">${escapeHtml(t.title)}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Render mood selector
+  document.querySelectorAll('.edit-mood-btn').forEach(btn => {
+    if (log && parseInt(btn.dataset.mood) === log.mood) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // Attach mood button listeners
+  document.querySelectorAll('.edit-mood-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const selectedBtn = e.target.closest('.edit-mood-btn');
+      if (!selectedBtn) return;
+      document.querySelectorAll('.edit-mood-btn').forEach(b => b.classList.remove('active'));
+      selectedBtn.classList.add('active');
+    });
+  });
+
+  // Render custom fields
+  const logFieldsContainer = document.getElementById('edit-log-fields');
+  if (fields.length === 0) {
+    logFieldsContainer.innerHTML = '<p class="text-gray-400 text-sm">No custom fields configured</p>';
+  } else {
+    logFieldsContainer.innerHTML = fields.map(field => {
+      const value = logEntries[field.id] || '';
+      let inputHtml;
+
+      if (field.type === 'time') {
+        inputHtml = `<input type="time" class="edit-log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" />`;
+      } else if (field.type === 'number') {
+        inputHtml = `<input type="number" class="edit-log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" placeholder="0" />`;
+      } else {
+        inputHtml = `<input type="text" class="edit-log-field-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-field-id="${field.id}" value="${escapeHtml(value)}" placeholder="Enter value..." />`;
+      }
+
+      return `
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">${escapeHtml(field.name)}</label>
+          ${inputHtml}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Render notes
+  document.getElementById('edit-log-notes').value = log?.notes || '';
+
+  // Show modal
+  editHistoryModal.classList.remove('hidden');
+}
+
+function hideEditHistoryModal() {
+  editHistoryModal.classList.add('hidden');
+  currentEditDate = null;
+  currentEditData = null;
+}
+
+async function handleEditHistorySave() {
+  if (!currentEditData || !currentEditDate) return;
+
+  try {
+    const dateStr = currentEditDate;
+
+    // Collect task completion updates
+    const taskCheckboxes = document.querySelectorAll('.edit-task-checkbox');
+    const taskUpdates = [];
+
+    taskCheckboxes.forEach(checkbox => {
+      const taskId = checkbox.dataset.taskId;
+      const isCompleted = checkbox.checked;
+      taskUpdates.push({ taskId, isCompleted });
+    });
+
+    // Update task completions
+    for (const update of taskUpdates) {
+      if (update.isCompleted) {
+        await markComplete(update.taskId, dateStr);
+      } else {
+        // For unchecking, we need to either delete the completion or mark as incomplete
+        const existing = await getCompletionForTaskAndDate(update.taskId, dateStr);
+        if (existing) {
+          await markIncomplete(update.taskId, dateStr, existing.failure_note || 'Edited from history');
+        }
+      }
+    }
+
+    // Collect log data updates
+    const selectedMoodBtn = document.querySelector('.edit-mood-btn.active');
+    const selectedMood = selectedMoodBtn ? parseInt(selectedMoodBtn.dataset.mood) : null;
+    const notes = document.getElementById('edit-log-notes').value.trim() || null;
+
+    // Collect field values
+    const fieldInputs = document.querySelectorAll('.edit-log-field-input');
+    const fieldValues = {};
+    fieldInputs.forEach(input => {
+      const fieldId = input.dataset.fieldId;
+      const value = input.value;
+      if (value) {
+        fieldValues[fieldId] = value;
+      }
+    });
+
+    // Update or create daily log
+    let dailyLogId = currentEditData.log?.id;
+
+    if (selectedMood || notes || Object.keys(fieldValues).length > 0) {
+      // Need to create or update log
+      if (dailyLogId) {
+        // Update existing
+        const updates = {};
+        if (selectedMood !== null) updates.mood = selectedMood;
+        if (notes !== undefined) updates.notes = notes;
+
+        const { data, error } = await supabaseClient
+          .from('daily_logs')
+          .update({ ...updates, updated_at: new Date().toISOString() })
+          .eq('id', dailyLogId)
+          .select()
+          .single();
+
+        if (error) throw error;
+      } else {
+        // Create new
+        const { data, error } = await supabaseClient
+          .from('daily_logs')
+          .insert([{
+            user_id: currentUser.id,
+            log_date: dateStr,
+            mood: selectedMood,
+            notes: notes
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        dailyLogId = data.id;
+      }
+
+      // Update field entries
+      for (const [fieldId, value] of Object.entries(fieldValues)) {
+        await upsertLogEntry(dailyLogId, fieldId, value);
+      }
+    }
+
+    // Close modal and reload history
+    hideEditHistoryModal();
+    await loadHistoryWeek();
+
+    // Show success message
+    const toast = document.getElementById('copy-toast');
+    toast.className = 'fixed bottom-8 right-8 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 z-50';
+    toast.innerHTML = '<p class="font-semibold">✓ Changes saved successfully!</p>';
+    toast.classList.remove('hidden');
+    setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 3000);
+  } catch (error) {
+    console.error('Error saving history edits:', error);
+    alert('Failed to save changes. Please try again.');
+  }
 }
 
 // Export functionality

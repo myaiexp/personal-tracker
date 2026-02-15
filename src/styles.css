@@ -123,13 +123,15 @@ button:active {
 }
 
 /* Mood Button States */
-.mood-btn.active {
+.mood-btn.active,
+.edit-mood-btn.active {
   border-color: #3b82f6;
   background-color: #dbeafe;
   transform: scale(1.05);
 }
 
-.mood-btn:active {
+.mood-btn:active,
+.edit-mood-btn:active {
   transform: scale(0.95);
 }
 
