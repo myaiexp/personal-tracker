@@ -360,6 +360,18 @@ async function markIncomplete(taskId, date, failureNote) {
   }
 }
 
+async function deleteCompletion(taskId, date) {
+  const existing = await getCompletionForTaskAndDate(taskId, date);
+  if (existing) {
+    const { error } = await supabaseClient
+      .from('completions')
+      .delete()
+      .eq('id', existing.id);
+
+    if (error) throw error;
+  }
+}
+
 // Daily Log API calls
 async function fetchLogFields() {
   const { data, error } = await supabaseClient
@@ -522,10 +534,14 @@ async function loadTasks() {
     const completionsMap = {};
     completionsData.forEach(comp => {
       if (!completionsMap[comp.task_id]) {
-        completionsMap[comp.task_id] = { today: false, ever: false };
+        completionsMap[comp.task_id] = { today: false, ever: false, skipped_today: false, skip_note: null };
       }
       if (comp.completed_date === today && comp.is_completed) {
         completionsMap[comp.task_id].today = true;
+      }
+      if (comp.completed_date === today && !comp.is_completed && comp.failure_note) {
+        completionsMap[comp.task_id].skipped_today = true;
+        completionsMap[comp.task_id].skip_note = comp.failure_note;
       }
       if (comp.is_completed) {
         completionsMap[comp.task_id].ever = true;
@@ -536,7 +552,11 @@ async function loadTasks() {
       ...task,
       completed_today: task.type === 'daily'
         ? completionsMap[task.id]?.today || false
-        : completionsMap[task.id]?.ever || false
+        : completionsMap[task.id]?.ever || false,
+      skipped_today: task.type === 'daily'
+        ? completionsMap[task.id]?.skipped_today || false
+        : false,
+      skip_note: completionsMap[task.id]?.skip_note || null
     }));
 
     renderTasks();
@@ -570,8 +590,24 @@ function renderTasks() {
 }
 
 function renderTaskItem(task) {
+  if (task.skipped_today) {
+    return `
+      <div class="task-item task-skipped flex items-start gap-3 p-3 bg-amber-50 rounded-lg" data-task-id="${task.id}">
+        <span class="text-amber-500 mt-0.5">&#10005;</span>
+        <div class="flex-1">
+          <span class="task-title text-amber-700 line-through">${escapeHtml(task.title)}</span>
+          <p class="text-xs text-amber-600 italic mt-1">${escapeHtml(task.skip_note)}</p>
+        </div>
+        <button class="undo-skip-btn px-3 py-1 text-sm bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors" data-task-id="${task.id}">
+          Undo
+        </button>
+      </div>
+    `;
+  }
+
   const checkedAttr = task.completed_today ? 'checked' : '';
   const completedClass = task.completed_today ? 'task-completed' : '';
+  const showSkip = task.type === 'daily' && !task.completed_today;
 
   return `
     <div class="task-item ${completedClass} flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors" data-task-id="${task.id}">
@@ -582,6 +618,7 @@ function renderTaskItem(task) {
         data-task-id="${task.id}"
       />
       <span class="task-title flex-1 text-gray-800" data-task-id="${task.id}">${escapeHtml(task.title)}</span>
+      ${showSkip ? `<button class="skip-btn px-3 py-1 text-sm bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors" data-task-id="${task.id}">Skip</button>` : ''}
       <button class="edit-btn px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors" data-task-id="${task.id}">
         Edit
       </button>
@@ -595,6 +632,14 @@ function renderTaskItem(task) {
 function attachTaskEventListeners() {
   document.querySelectorAll('.task-checkbox').forEach(checkbox => {
     checkbox.addEventListener('change', handleTaskToggle);
+  });
+
+  document.querySelectorAll('.skip-btn').forEach(btn => {
+    btn.addEventListener('click', handleTaskSkip);
+  });
+
+  document.querySelectorAll('.undo-skip-btn').forEach(btn => {
+    btn.addEventListener('click', handleUndoSkip);
   });
 
   document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -629,19 +674,36 @@ async function handleTaskToggle(e) {
   const isChecked = e.target.checked;
   const today = getTodayDate();
 
-  if (isChecked) {
-    try {
+  try {
+    if (isChecked) {
       await markComplete(taskId, today);
-      await refreshAll();
-    } catch (error) {
-      console.error('Error marking task complete:', error);
-      e.target.checked = false;
-      alert('Failed to mark task complete. Please try again.');
+    } else {
+      await deleteCompletion(taskId, today);
     }
-  } else {
-    e.target.checked = true;
-    currentTaskIdForFailure = taskId;
-    showFailureModal();
+    await refreshAll();
+  } catch (error) {
+    console.error('Error toggling task:', error);
+    e.target.checked = !isChecked;
+    alert('Failed to update task. Please try again.');
+  }
+}
+
+async function handleTaskSkip(e) {
+  const taskId = e.target.dataset.taskId;
+  currentTaskIdForFailure = taskId;
+  showFailureModal();
+}
+
+async function handleUndoSkip(e) {
+  const taskId = e.target.dataset.taskId;
+  const today = getTodayDate();
+
+  try {
+    await deleteCompletion(taskId, today);
+    await refreshAll();
+  } catch (error) {
+    console.error('Error undoing skip:', error);
+    alert('Failed to undo skip. Please try again.');
   }
 }
 

@@ -52,6 +52,10 @@
   color: #9ca3af;
 }
 
+.task-skipped {
+  border-left: 3px solid #f59e0b;
+}
+
 .task-checkbox {
   transition: all 0.2s ease;
 }
